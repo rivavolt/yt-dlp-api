@@ -23,6 +23,15 @@
           binary = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
           });
+          yt-dlp-latest = pkgs.yt-dlp.overridePythonAttrs (old: rec {
+            version = "2026.03.03";
+            src = pkgs.fetchFromGitHub {
+              owner = "yt-dlp";
+              repo = "yt-dlp";
+              tag = version;
+              hash = "sha256-BPZzMT1IrZvgva/m5tYMaDYoUaP3VmpmcYeOUOwuoUY=";
+            };
+          });
         in {
           default = binary;
 
@@ -31,7 +40,7 @@
             tag = "latest";
             contents = [
               binary
-              pkgs.yt-dlp
+              yt-dlp-latest
               pkgs.ffmpeg-headless
               pkgs.cacert
             ];
