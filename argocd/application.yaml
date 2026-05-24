@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: yt-dlp-api
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+  labels:
+    dashboard.volt.tail.avolt.net/category: app
+  annotations:
+    # ArgoCD Image Updater: track sha-<gitsha> tags on the yt-dlp-api
+    # image and write the chosen tag back to this Application's
+    # annotations (no git commits). The `latest` pin in
+    # k8s/deployment.yaml is a fallback only.
+    argocd-image-updater.argoproj.io/image-list: api=ghcr.io/andreivolt/yt-dlp-api:^sha-.*
+    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/andreivolt/yt-dlp-api
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: yt-dlp-api
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  revisionHistoryLimit: 5

@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yt-dlp-api
+  namespace: yt-dlp-api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: yt-dlp-api }
+  template:
+    metadata:
+      labels: { app: yt-dlp-api }
+    spec:
+      # Watts has the residential WAN egress YouTube wants; pin the pod
+      # there. The taint is NoSchedule, so we need an explicit toleration.
+      nodeSelector:
+        kubernetes.io/hostname: watts
+      tolerations:
+        - key: node-class
+          operator: Equal
+          value: laptop
+          effect: NoSchedule
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: api
+          # renovate: datasource=docker depName=ghcr.io/andreivolt/yt-dlp-api versioning=loose
+          image: ghcr.io/andreivolt/yt-dlp-api:latest
+          imagePullPolicy: Always
+          ports:
+            - { name: http, containerPort: 3000 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+        # Tailscale sidecar: joins headscale as `youtube-transcripts`
+        # user (the dedicated user/group that the fly youtube-transcripts
+        # app talks to via ACL `group:youtube-transcripts ->
+        # group:youtube-transcripts:*`). Hostname `yt-dlp-api` mirrors
+        # the prior systemd-unit hostname so the fly side keeps reaching
+        # http://yt-dlp-api:3000 unchanged.
+        - name: tailscale
+          image: tailscale/tailscale:latest
+          env:
+            - { name: TS_HOSTNAME, value: yt-dlp-api }
+            - { name: TS_EXTRA_ARGS, value: "--login-server=https://hs.avolt.net" }
+            - { name: TS_STATE_DIR, value: /var/lib/tailscale }
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: yt-dlp-api-ts
+                  key: authkey
+          # Kernel-mode tailscale (no TS_USERSPACE): the sidecar brings up
+          # a real tun interface on the pod's shared network namespace, so
+          # the api container's :3000 listener is reachable on the pod's
+          # tailscale IP. Fly hits it via MagicDNS as `yt-dlp-api`.
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_RAW]
+          volumeMounts:
+            - { name: ts-state, mountPath: /var/lib/tailscale }
+            - { name: tun, mountPath: /dev/net/tun }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+      volumes:
+        - { name: ts-state, emptyDir: {} }
+        - { name: tun, hostPath: { path: /dev/net/tun } }
