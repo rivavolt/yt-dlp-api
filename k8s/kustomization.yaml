@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - rbac.yaml
   - service.yaml
   - deployment.yaml
   - secrets/ghcr-pull.sops.yaml

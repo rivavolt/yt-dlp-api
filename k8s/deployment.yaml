@@ -22,6 +22,7 @@ spec:
           operator: Equal
           value: laptop
           effect: NoSchedule
+      serviceAccountName: tailscale
       imagePullSecrets:
         - name: ghcr-pull
       containers:
@@ -53,7 +54,20 @@ spec:
           env:
             - { name: TS_HOSTNAME, value: yt-dlp-api }
             - { name: TS_EXTRA_ARGS, value: "--login-server=https://hs.avolt.net" }
-            - { name: TS_STATE_DIR, value: /var/lib/tailscale }
+            # Persist device identity in a namespaced Secret managed by the
+            # sidecar itself (separate from yt-dlp-api-ts, which only holds
+            # the bootstrap auth-key). Requires the matching RBAC in
+            # rbac.yaml; without it the sidecar selfsubjectaccessreview
+            # against the k8s API fails and the container crashloops.
+            - { name: TS_KUBE_SECRET, value: tailscale-state }
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             - name: TS_AUTHKEY
               valueFrom:
                 secretKeyRef:
