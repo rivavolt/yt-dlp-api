@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   finalizers: [resources-finalizer.argocd.argoproj.io]
   labels:
-    dashboard.volt.tail.avolt.net/category: app
+    volt.tail.avolt.net/category: app
   annotations:
     # ArgoCD Image Updater: track sha-<gitsha> tags on the yt-dlp-api
     # image and write the chosen tag back to this Application's
