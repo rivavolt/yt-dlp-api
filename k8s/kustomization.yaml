@@ -11,4 +11,7 @@ resources:
 
 images:
   - name: ghcr.io/andreivolt/yt-dlp-api
-    newTag: latest
+    # Pinned to the first build carrying SOCKS-proxy egress support; argocd
+    # image-updater bumps this forward to newer sha-* builds. Was `latest`,
+    # which let it briefly resolve back to a pre-proxy build.
+    newTag: sha-36a181a
