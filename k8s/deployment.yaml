@@ -13,15 +13,12 @@ spec:
     metadata:
       labels: { app: yt-dlp-api }
     spec:
-      # Watts has the residential WAN egress YouTube wants; pin the pod
-      # there. The taint is NoSchedule, so we need an explicit toleration.
+      # Compute runs on volt (prod, datacenter — far more RAM than watts, which
+      # was OOM-prone here). volt's datacenter IP is YouTube-blocked, so yt-dlp
+      # egress is routed through watts's residential WAN via the SOCKS5 proxy
+      # (YTDLP_PROXY below). volt is untainted prod, so no toleration needed.
       nodeSelector:
-        kubernetes.io/hostname: watts
-      tolerations:
-        - key: node-class
-          operator: Equal
-          value: laptop
-          effect: NoSchedule
+        kubernetes.io/hostname: volt
       serviceAccountName: tailscale
       imagePullSecrets:
         - name: ghcr-pull
@@ -30,6 +27,11 @@ spec:
           # renovate: datasource=docker depName=ghcr.io/andreivolt/yt-dlp-api versioning=loose
           image: ghcr.io/andreivolt/yt-dlp-api:latest
           imagePullPolicy: Always
+          env:
+            # Route all yt-dlp egress through watts's residential WAN. socks5h
+            # so DNS is also resolved proxy-side. Bound to watts's tailnet IP;
+            # reachable from this pod over flannel-on-tailscale.
+            - { name: YTDLP_PROXY, value: "socks5h://100.64.0.3:1080" }
           ports:
             - { name: http, containerPort: 3000 }
           resources:
