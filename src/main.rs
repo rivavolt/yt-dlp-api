@@ -7,9 +7,36 @@ use axum::{
 };
 use serde::Deserialize;
 use std::process::Stdio;
+use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::process::Command;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+
+// Optional SOCKS proxy (e.g. socks5h://100.64.0.3:1080) prepended to every
+// yt-dlp invocation. socks5h keeps DNS on the proxy side too. Set via the
+// YTDLP_PROXY env var; absent => yt-dlp egresses directly.
+fn proxy_args() -> &'static [String] {
+    static ARGS: OnceLock<Vec<String>> = OnceLock::new();
+    ARGS.get_or_init(|| match std::env::var("YTDLP_PROXY") {
+        Ok(p) if !p.is_empty() => vec!["--proxy".to_string(), p],
+        _ => Vec::new(),
+    })
+}
+
+// Build the full yt-dlp argv: proxy flag (if any) followed by the call-specific
+// args. Returned as owned Strings so callers can pass borrowed &str slices.
+fn ytdlp_argv(args: &[&str]) -> Vec<String> {
+    let mut argv: Vec<String> = proxy_args().to_vec();
+    argv.extend(args.iter().map(|s| s.to_string()));
+    argv
+}
+
+const RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(500),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+];
 
 #[derive(Deserialize)]
 struct UrlQuery {
@@ -22,33 +49,50 @@ struct ChannelQuery {
     limit: Option<u32>,
 }
 
+// Run yt-dlp, retrying with backoff on failure. A failed invocation can mean a
+// genuine bad URL or a transient hiccup reaching the egress proxy (watts may be
+// briefly down); rather than hard-failing on the first error we retry a few
+// times so a momentarily-unreachable proxy degrades to a slow request, not a
+// 502. The last stderr is surfaced if every attempt fails.
 async fn run_ytdlp(args: &[&str]) -> Result<serde_json::Value, Response> {
-    let output = Command::new("yt-dlp")
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| {
-            error!("failed to spawn yt-dlp: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
-        })?;
+    let argv = ytdlp_argv(args);
+    let mut last_err: Option<String> = None;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("yt-dlp failed: {stderr}");
-        return Err((StatusCode::BAD_GATEWAY, format!("yt-dlp error: {stderr}")).into_response());
+    for attempt in 0..=RETRY_DELAYS.len() {
+        let output = Command::new("yt-dlp")
+            .args(&argv)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| {
+                error!("failed to spawn yt-dlp: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
+            })?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return serde_json::from_str(&stdout).map_err(|e| {
+                error!("json parse error: {e}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("json parse error: {e}"),
+                )
+                    .into_response()
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        last_err = Some(stderr.clone());
+        if let Some(delay) = RETRY_DELAYS.get(attempt) {
+            warn!(attempt, "yt-dlp failed, retrying: {stderr}");
+            tokio::time::sleep(*delay).await;
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(&stdout).map_err(|e| {
-        error!("json parse error: {e}");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("json parse error: {e}"),
-        )
-            .into_response()
-    })
+    let stderr = last_err.unwrap_or_default();
+    error!("yt-dlp failed after retries: {stderr}");
+    Err((StatusCode::BAD_GATEWAY, format!("yt-dlp error: {stderr}")).into_response())
 }
 
 async fn metadata(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response> {
@@ -77,26 +121,44 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
     let template = dir.join(format!("{id}.%(ext)s"));
     let template_str = template.to_string_lossy();
 
-    let output = Command::new("yt-dlp")
-        .args([
-            "--extract-audio",
-            "--audio-format", "opus",
-            "--audio-quality", "0",
-            "--no-playlist",
-            "-o", &template_str,
-            &q.url,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
-        })?;
+    let argv = ytdlp_argv(&[
+        "--extract-audio",
+        "--audio-format", "opus",
+        "--audio-quality", "0",
+        "--no-playlist",
+        "-o", &template_str,
+        &q.url,
+    ]);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("yt-dlp audio failed: {stderr}");
+    let mut last_err: Option<String> = None;
+    let mut ok = false;
+    for attempt in 0..=RETRY_DELAYS.len() {
+        let output = Command::new("yt-dlp")
+            .args(&argv)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
+            })?;
+
+        if output.status.success() {
+            ok = true;
+            break;
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        last_err = Some(stderr.clone());
+        if let Some(delay) = RETRY_DELAYS.get(attempt) {
+            warn!(attempt, "yt-dlp audio failed, retrying: {stderr}");
+            tokio::time::sleep(*delay).await;
+        }
+    }
+
+    if !ok {
+        let stderr = last_err.unwrap_or_default();
+        error!("yt-dlp audio failed after retries: {stderr}");
         return Err((StatusCode::BAD_GATEWAY, format!("yt-dlp error: {stderr}")).into_response());
     }
 
