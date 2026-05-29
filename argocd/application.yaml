@@ -6,14 +6,13 @@ metadata:
   finalizers: [resources-finalizer.argocd.argoproj.io]
   labels:
     volt.tail.avolt.net/category: app
-  annotations:
-    # ArgoCD Image Updater: track sha-<gitsha> tags on the yt-dlp-api
-    # image and write the chosen tag back to this Application's
-    # annotations (no git commits). The `latest` pin in
-    # k8s/deployment.yaml is a fallback only.
-    argocd-image-updater.argoproj.io/image-list: api=ghcr.io/andreivolt/yt-dlp-api:^sha-.*
-    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/write-back-method: argocd
+  # Image bumps come from the kustomize newTag pin in k8s/kustomization.yaml
+  # (committed per release), not argocd-image-updater. The updater's argocd
+  # write-back keys off the *running* container's tag, so whenever a pod can't
+  # start on a freshly-pushed image (e.g. a node-level containerd stall) it
+  # writes the old tag back to this Application and pins the deployment to a
+  # stale build — a revert loop. Bumping newTag in git is deterministic and has
+  # no such failure mode.
 spec:
   project: default
   source:
