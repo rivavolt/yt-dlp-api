@@ -10,8 +10,9 @@ resources:
   - secrets/ts.sops.yaml
 
 images:
-  - name: ghcr.io/andreivolt/yt-dlp-api
-    # Pinned to the first build carrying SOCKS-proxy egress support; argocd
-    # image-updater bumps this forward to newer sha-* builds. Was `latest`,
-    # which let it briefly resolve back to a pre-proxy build.
-    newTag: sha-36a181a
+  - name: ghcr.io/rivavolt/yt-dlp-api
+    # argocd image-updater bumps this forward to newer sha-* builds. Pinned to
+    # the live build (sha-f15fd51), the first one published under the rivavolt
+    # package after the repo transfer; the old andreivolt-scoped sha-36a181a
+    # does not exist under this path.
+    newTag: sha-f15fd51

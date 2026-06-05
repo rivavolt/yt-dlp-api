@@ -16,7 +16,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/andreivolt/yt-dlp-api
+    repoURL: https://github.com/rivavolt/yt-dlp-api
     targetRevision: main
     path: k8s
   destination:

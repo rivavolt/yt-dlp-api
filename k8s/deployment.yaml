@@ -24,8 +24,8 @@ spec:
         - name: ghcr-pull
       containers:
         - name: api
-          # renovate: datasource=docker depName=ghcr.io/andreivolt/yt-dlp-api versioning=loose
-          image: ghcr.io/andreivolt/yt-dlp-api:latest
+          # renovate: datasource=docker depName=ghcr.io/rivavolt/yt-dlp-api versioning=loose
+          image: ghcr.io/rivavolt/yt-dlp-api:latest
           imagePullPolicy: Always
           env:
             # Route all yt-dlp egress through watts's residential WAN. socks5h
