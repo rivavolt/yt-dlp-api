@@ -1,58 +1,7 @@
 name: cache
-
-# Build the flake's default package on a Blacksmith runner and push it to the self-hosted
-# attic binary cache (rivavolt) on id, over the headscale tailnet. The attic server is
-# firewall-scoped to tailscale0, so the runner first joins the tailnet as an ephemeral node
-# tagged tag:ci — its only ACL rule is tag:ci -> tag:identity:8201, and it auto-deregisters
-# when the job ends. tag:personal's dst excludes tag:ci, so CI join/leave churn can't disconnect
-# personal nodes. Mirrors nixos-config/.github/workflows/build-cache.yml.
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
+on: { push: { branches: [main] }, workflow_dispatch: {} }
 jobs:
   cache:
-    name: build and push
-    runs-on: blacksmith-8vcpu-ubuntu-2204
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            extra-substituters = http://id.tail.avolt.net:8201/rivavolt
-            extra-trusted-substituters = http://id.tail.avolt.net:8201/rivavolt
-            extra-trusted-public-keys = rivavolt:aGJ5buRRJn5zSQs1BJDYT7qttFFk0bSioZBSPhF+PRk=
-
-      # Join the headscale tailnet so the runner can reach the tailnet-only attic server on id.
-      # The pre-auth key is ephemeral and pre-tagged tag:ci; tag:ci must also be advertised here
-      # because headscale 0.28 doesn't stamp a preauth key's --tags as forced tags through the
-      # action's `tailscale up` path, so the node would otherwise join untagged.
-      - name: Connect to headscale tailnet
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          tags: tag:ci
-          args: --login-server https://hs.avolt.net --accept-routes
-          version: 1.82.0
-          use-cache: 'true'
-
-      - name: Install attic client
-        run: nix profile install nixpkgs#attic-client
-
-      - name: Log in to attic cache
-        run: attic login rivavolt http://id.tail.avolt.net:8201 "$ATTIC_TOKEN"
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-
-      - name: Build default package
-        run: nix build --no-link --print-out-paths .#default | tee /tmp/out
-
-      - name: Push to attic
-        run: attic push rivavolt "$(cat /tmp/out)"
+    uses: rivavolt/ci/.github/workflows/flake-cache.yml@v1
+    with: { attr: ".#default" }
+    secrets: inherit
