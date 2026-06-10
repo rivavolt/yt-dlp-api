@@ -3,5 +3,5 @@ on: { push: { branches: [main] }, workflow_dispatch: {} }
 jobs:
   cache:
     uses: rivavolt/ci/.github/workflows/flake-cache.yml@v1
-    with: { attr: ".#default", runners: '["blacksmith-8vcpu-ubuntu-2204"]' }
+    with: { runners: '["blacksmith-8vcpu-ubuntu-2204"]' }
     secrets: inherit
