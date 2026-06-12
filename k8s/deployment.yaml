@@ -13,25 +13,29 @@ spec:
     metadata:
       labels: { app: yt-dlp-api }
     spec:
-      # Compute runs on volt (prod, datacenter — far more RAM than watts, which
-      # was OOM-prone here). volt's datacenter IP is YouTube-blocked, so yt-dlp
-      # egress is routed through watts's residential WAN via the SOCKS5 proxy
-      # (YTDLP_PROXY below). volt is untainted prod, so no toleration needed.
+      # Compute runs on volt (prod, datacenter — far more RAM than watts, which was OOM-prone here). volt's datacenter IP is YouTube-blocked, so yt-dlp egress is routed through watts's residential WAN via the SOCKS5 proxy (YTDLP_PROXY below). volt is untainted prod, so no toleration needed.
+      #
+      # No tailscale sidecar: the pod carries no tailnet identity of its own. The old kernel-mode sidecar existed so off-cluster consumers could reach the pod by MagicDNS, and it was the pod's only crash-loop — its sops-baked pre-auth key predates the rebuilt headscale, which rejects it with "auth-key not found" (the api container itself never restarted; kube-state-metrics shows restartCount 0 while the sidecar racked up 82). In-cluster consumers use the ClusterIP Service; tailnet exposure is traefik's tailsecure entrypoint via Ingress (gated on the #356 entrypoint rework); the watts egress hop needs no pod identity because the node's tailnet membership carries pod traffic to 100.64.0.3.
       nodeSelector:
         kubernetes.io/hostname: volt
-      serviceAccountName: tailscale
       imagePullSecrets:
         - name: ghcr-pull
+      securityContext:
+        # The Nix OCI image sets no USER, so without an explicit uid the kubelet would refuse runAsNonRoot; 65534 works because the static binary tree needs no passwd entry and all writes go to the /tmp emptyDir.
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
       containers:
         - name: api
           # renovate: datasource=docker depName=ghcr.io/rivavolt/yt-dlp-api versioning=loose
           image: ghcr.io/rivavolt/yt-dlp-api:latest
-          imagePullPolicy: Always
+          # The kustomize newTag pins an immutable sha-* build, so Always would only re-ask GHCR for the same content on every restart (pulls from this cluster have been observed taking minutes, which is what stretched the old sidecar crash-loop to its hourly cadence).
+          imagePullPolicy: IfNotPresent
           env:
-            # Route all yt-dlp egress through watts's residential WAN. socks5h
-            # so DNS is also resolved proxy-side. Bound to watts's tailnet IP;
-            # reachable from this pod over flannel-on-tailscale.
+            # Route all yt-dlp egress through watts's residential WAN (hosts/watts/socks-proxy.nix microsocks). socks5h so DNS is also resolved proxy-side — YouTube sees a residential resolver as well as a residential address. Bound to watts's tailnet IP; reachable from this pod via the node's tailnet membership.
             - { name: YTDLP_PROXY, value: "socks5h://100.64.0.3:1080" }
+            # yt-dlp resolves its cache dir through HOME; point it at the writable emptyDir since the rootfs is read-only and the image has no home directories.
+            - { name: HOME, value: /tmp }
           ports:
             - { name: http, containerPort: 3000 }
           resources:
@@ -45,49 +49,15 @@ spec:
             httpGet: { path: /health, port: 3000 }
             initialDelaySeconds: 30
             periodSeconds: 30
-        # Tailscale sidecar: joins headscale as `youtube-transcripts`
-        # user (the dedicated user/group that the fly youtube-transcripts
-        # app talks to via ACL `group:youtube-transcripts ->
-        # group:youtube-transcripts:*`). Hostname `yt-dlp-api` mirrors
-        # the prior systemd-unit hostname so the fly side keeps reaching
-        # http://yt-dlp-api:3000 unchanged.
-        - name: tailscale
-          image: tailscale/tailscale:latest
-          env:
-            - { name: TS_HOSTNAME, value: yt-dlp-api }
-            - { name: TS_EXTRA_ARGS, value: "--login-server=https://hs.avolt.net" }
-            # Persist device identity in a namespaced Secret managed by the
-            # sidecar itself (separate from yt-dlp-api-ts, which only holds
-            # the bootstrap auth-key). Requires the matching RBAC in
-            # rbac.yaml; without it the sidecar selfsubjectaccessreview
-            # against the k8s API fails and the container crashloops.
-            - { name: TS_KUBE_SECRET, value: tailscale-state }
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_UID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.uid
-            - name: TS_AUTHKEY
-              valueFrom:
-                secretKeyRef:
-                  name: yt-dlp-api-ts
-                  key: authkey
-          # Kernel-mode tailscale (no TS_USERSPACE): the sidecar brings up
-          # a real tun interface on the pod's shared network namespace, so
-          # the api container's :3000 listener is reachable on the pod's
-          # tailscale IP. Fly hits it via MagicDNS as `yt-dlp-api`.
           securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
-              add: [NET_ADMIN, NET_RAW]
+              drop: [ALL]
           volumeMounts:
-            - { name: ts-state, mountPath: /var/lib/tailscale }
-            - { name: tun, mountPath: /dev/net/tun }
-          resources:
-            requests: { cpu: 20m, memory: 32Mi }
-            limits:   { cpu: 200m, memory: 128Mi }
+            # /audio extraction scratch (uuid-named yt-dlp output templates) plus yt-dlp's HOME cache; bounded so a runaway download can't fill the node.
+            - { name: tmp, mountPath: /tmp }
       volumes:
-        - { name: ts-state, emptyDir: {} }
-        - { name: tun, hostPath: { path: /dev/net/tun } }
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi

@@ -3,16 +3,11 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - rbac.yaml
   - service.yaml
   - deployment.yaml
   - secrets/ghcr-pull.sops.yaml
-  - secrets/ts.sops.yaml
 
 images:
   - name: ghcr.io/rivavolt/yt-dlp-api
-    # argocd image-updater bumps this forward to newer sha-* builds. Pinned to
-    # the live build (sha-f15fd51), the first one published under the rivavolt
-    # package after the repo transfer; the old andreivolt-scoped sha-36a181a
-    # does not exist under this path.
-    newTag: sha-f15fd51
+    # Immutable per-commit build tag, bumped in git (renovate hook on the image line in deployment.yaml); no argocd image-updater. The :latest in deployment.yaml is only the renovate-tracked name, never what runs.
+    newTag: sha-3be932a
