@@ -32,11 +32,7 @@ fn ytdlp_argv(args: &[&str]) -> Vec<String> {
     argv
 }
 
-const RETRY_DELAYS: [Duration; 3] = [
-    Duration::from_millis(500),
-    Duration::from_secs(2),
-    Duration::from_secs(5),
-];
+const RETRY_DELAYS: [Duration; 3] = [Duration::from_millis(500), Duration::from_secs(2), Duration::from_secs(5)];
 
 #[derive(Deserialize)]
 struct UrlQuery {
@@ -59,26 +55,19 @@ async fn run_ytdlp(args: &[&str]) -> Result<serde_json::Value, Response> {
     let mut last_err: Option<String> = None;
 
     for attempt in 0..=RETRY_DELAYS.len() {
-        let output = Command::new("yt-dlp")
-            .args(&argv)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| {
-                error!("failed to spawn yt-dlp: {e}");
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
-            })?;
+        let output =
+            Command::new("yt-dlp").args(&argv).stdout(Stdio::piped()).stderr(Stdio::piped()).output().await.map_err(
+                |e| {
+                    error!("failed to spawn yt-dlp: {e}");
+                    (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
+                },
+            )?;
 
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             return serde_json::from_str(&stdout).map_err(|e| {
                 error!("json parse error: {e}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("json parse error: {e}"),
-                )
-                    .into_response()
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("json parse error: {e}")).into_response()
             });
         }
 
@@ -98,13 +87,7 @@ async fn run_ytdlp(args: &[&str]) -> Result<serde_json::Value, Response> {
 async fn metadata(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response> {
     info!(url = %q.url, "metadata request");
 
-    let json = run_ytdlp(&[
-        "--dump-single-json",
-        "--no-download",
-        "--no-playlist",
-        &q.url,
-    ])
-    .await?;
+    let json = run_ytdlp(&["--dump-single-json", "--no-download", "--no-playlist", &q.url]).await?;
 
     Ok(Json(json))
 }
@@ -114,19 +97,22 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
 
     let id = uuid::Uuid::new_v4().to_string();
     let dir = std::env::temp_dir().join("yt-dlp-api");
-    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir error: {e}")).into_response()
-    })?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("mkdir error: {e}")).into_response())?;
 
     let template = dir.join(format!("{id}.%(ext)s"));
     let template_str = template.to_string_lossy();
 
     let argv = ytdlp_argv(&[
         "--extract-audio",
-        "--audio-format", "opus",
-        "--audio-quality", "0",
+        "--audio-format",
+        "opus",
+        "--audio-quality",
+        "0",
         "--no-playlist",
-        "-o", &template_str,
+        "-o",
+        &template_str,
         &q.url,
     ]);
 
@@ -139,9 +125,7 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response()
-            })?;
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("spawn error: {e}")).into_response())?;
 
         if output.status.success() {
             ok = true;
@@ -163,9 +147,9 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
     }
 
     // Find the output file (extension determined by yt-dlp)
-    let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("readdir error: {e}")).into_response()
-    })?;
+    let mut entries = tokio::fs::read_dir(&dir)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("readdir error: {e}")).into_response())?;
 
     let mut found = None;
     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -177,21 +161,16 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
         }
     }
 
-    let path = found.ok_or_else(|| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "output file not found").into_response()
-    })?;
+    let path = found.ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "output file not found").into_response())?;
 
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {e}")).into_response()
-    })?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {e}")).into_response())?;
 
     // Clean up
     let _ = tokio::fs::remove_file(&path).await;
 
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("opus");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("opus");
 
     let content_type = match ext {
         "opus" => "audio/opus",
@@ -204,10 +183,7 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
     let disposition = format!("attachment; filename=\"audio.{ext}\"");
 
     Ok((
-        [
-            ("content-type".to_string(), content_type.to_string()),
-            ("content-disposition".to_string(), disposition),
-        ],
+        [("content-type".to_string(), content_type.to_string()), ("content-disposition".to_string(), disposition)],
         bytes,
     ))
 }
@@ -215,13 +191,7 @@ async fn audio(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response>
 async fn playlist(Query(q): Query<UrlQuery>) -> Result<impl IntoResponse, Response> {
     info!(url = %q.url, "playlist request");
 
-    let json = run_ytdlp(&[
-        "--dump-single-json",
-        "--flat-playlist",
-        "--no-download",
-        &q.url,
-    ])
-    .await?;
+    let json = run_ytdlp(&["--dump-single-json", "--flat-playlist", "--no-download", &q.url]).await?;
 
     Ok(Json(json))
 }
@@ -235,8 +205,10 @@ async fn channel(Query(q): Query<ChannelQuery>) -> Result<impl IntoResponse, Res
         "--dump-single-json",
         "--flat-playlist",
         "--no-download",
-        "--playlist-end", &limit_str,
-        "--extractor-args", "youtubetab:skip=authcheck",
+        "--playlist-end",
+        &limit_str,
+        "--extractor-args",
+        "youtubetab:skip=authcheck",
         &q.url,
     ])
     .await?;
@@ -251,10 +223,7 @@ async fn health() -> &'static str {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
     let app = Router::new()
@@ -265,8 +234,11 @@ async fn main() {
         .route("/health", get(health))
         .layer(TraceLayer::new_for_http());
 
-    let addr = "0.0.0.0:3000";
+    // Listen address from YTDLP_API_BIND; the 0.0.0.0:3000 default keeps the
+    // container deployment working unchanged, while a host deployment fronted by
+    // a tailscale-serve sidecar sets 127.0.0.1:3000 so loopback is the only bind.
+    let addr = std::env::var("YTDLP_API_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
     info!("listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
