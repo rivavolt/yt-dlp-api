@@ -3,6 +3,10 @@ kind: Deployment
 metadata:
   name: yt-dlp-api
   namespace: yt-dlp-api
+  # app.kubernetes.io labels satisfy the cluster's require-labels kyverno policy; the bare `app` label stays as the immutable selector key.
+  labels:
+    app.kubernetes.io/name: yt-dlp-api
+    app.kubernetes.io/component: api
 spec:
   replicas: 1
   strategy:
@@ -11,7 +15,10 @@ spec:
     matchLabels: { app: yt-dlp-api }
   template:
     metadata:
-      labels: { app: yt-dlp-api }
+      labels:
+        app: yt-dlp-api
+        app.kubernetes.io/name: yt-dlp-api
+        app.kubernetes.io/component: api
     spec:
       # Compute runs on volt (prod, datacenter — far more RAM than watts, which was OOM-prone here). volt's datacenter IP is YouTube-blocked, so yt-dlp egress is routed through watts's residential WAN via the SOCKS5 proxy (YTDLP_PROXY below). volt is untainted prod, so no toleration needed.
       #
