@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: yt-dlp-api
+  namespace: yt-dlp-api
+  annotations:
+    # TAILNET-ONLY: bound exclusively to traefik's tailsecure entrypoint, which only the traefik-tailnet Service (100.64.0.16:443, volt-bootstrap manifests/traefik-external-ips.yaml) binds — this router does not exist on the public web/websecure entrypoints, so a public SNI probe against the GCP IP's :443 gets traefik's generic 404 while tailnet clients reach the clean portless https://yt-dlp-api.volt.tail.avolt.net. Entrypoint binding rather than an ipAllowList middleware because every flow reaches traefik MASQUERADEd to the same pod-CIDR source, so source-IP allowlists cannot tell public from tailnet on this cluster (see that manifest's door design). The off-cluster consumer is youtube-transcripts on the OVH cluster, which fetches metadata/audio over the tailnet; the headscale ACL admits group:youtube-transcripts to tag:cluster:443. The name resolves only via headscale MagicDNS (nixos-config hosts/id/headscale/k3s-cluster-records.nix); TLS is the reflector-mirrored *.volt.tail.avolt.net wildcard secret.
+    traefik.ingress.kubernetes.io/router.entrypoints: tailsecure
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: yt-dlp-api.volt.tail.avolt.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: yt-dlp-api
+                port: { number: 3000 }
+  tls:
+    - hosts:
+        - yt-dlp-api.volt.tail.avolt.net
+      secretName: wildcard-tail-avolt-net-tls

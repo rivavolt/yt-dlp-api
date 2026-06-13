@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - service.yaml
   - deployment.yaml
+  - ingress.yaml
   - secrets/ghcr-pull.sops.yaml
 
 images:
